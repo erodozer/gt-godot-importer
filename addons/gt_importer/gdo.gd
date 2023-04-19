@@ -34,8 +34,11 @@ func make_wheel(buffer: FileAccess, material: Material):
 	wheel.set_surface_override_material(0, null)
 	wheel.set_surface_override_material(1, material)
 	
+	var scale = (w / 10000.0)
+	
 	wheel.position = Vector3(x,y,z) * UNITS_TO_METRES
-	wheel.scale = Vector3(1.0,1.0,1.0) * (w / 10000.0)
+	wheel.translate(Vector3(0.0, abs(scale) * 0.5, 0.0))
+	wheel.scale = Vector3(1.0,1.0,1.0) * scale
 	wheel.add_to_group("gt2:wheel", true)
 	return wheel
 	
@@ -301,6 +304,11 @@ func make_shadow(buffer: FileAccess):
 		st.add_vertex(vertices[data >> 12 & 0x3F])
 		st.add_vertex(vertices[data >> 6 & 0x3F])
 		st.add_vertex(vertices[data & 0x3F])
+	
+		# add in reverse
+		st.add_vertex(vertices[data & 0x3F])
+		st.add_vertex(vertices[data >> 6 & 0x3F])
+		st.add_vertex(vertices[data >> 12 & 0x3F])
 		
 		
 	for _i in range(quad_count):
@@ -312,6 +320,15 @@ func make_shadow(buffer: FileAccess):
 		st.add_vertex(vertices[data >> 18 & 0x3F])
 		st.add_vertex(vertices[data >> 12 & 0x3F])
 		st.add_vertex(vertices[data & 0x3F])
+		
+		# add in reverse
+		st.add_vertex(vertices[data & 0x3F])
+		st.add_vertex(vertices[data >> 6 & 0x3F])
+		st.add_vertex(vertices[data >> 12 & 0x3F])
+		
+		st.add_vertex(vertices[data & 0x3F])
+		st.add_vertex(vertices[data >> 12 & 0x3F])
+		st.add_vertex(vertices[data >> 18 & 0x3F])
 		
 	var mesh = st.commit()
 	
@@ -349,8 +366,10 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	
 	# read wheel positions
 	var wheels = []
+	var scale = 0.0
 	for i in range(4):
 		var wheel = make_wheel(file, mat)
+		scale = wheel.scale.y
 		if include_wheels:
 			wheel.name = "wheel_%02d" % i
 			root.add_child(wheel)
@@ -366,7 +385,7 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	for i in range(lodCount):
 		var lod = make_lod(file, palettes)
 		lod.name = "lod_%d" % i
-		lod.translate(Vector3(0, 0.08, 0))
+		lod.translate(Vector3(0, scale * 0.75, 0))
 		
 		for s in range(lod.mesh.get_surface_count()):
 			var palette = (lod.mesh as ArrayMesh).surface_get_name(s).split("/")[1].split("=")[1].to_int()
@@ -385,9 +404,10 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 			lods.append(lod)
 			lod.add_to_group("gt2:body", true)
 		
-	#var shadow = make_shadow(file)
-	#root.add_child(shadow)
-	#shadow.owner = root
+	var shadow = make_shadow(file)
+	shadow.name = "shadow"
+	root.add_child(shadow)
+	shadow.owner = root
 	
 	for lod in lods:
 		root.add_child(lod)
@@ -401,20 +421,14 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 		var tex = ImageTexture.create_from_image(c.merged)
 		textures.append(tex)
 	
-	# debug show textures
-	var debug = Control.new()
-	for i in range(len(palettes)):
-		var c = palettes.values()[i]
-		var rect = TextureRect.new()
-		rect.texture = textures[i]
-		rect.name = "Color%s" % c.id
-		debug.add_child(rect)
-	
-	root.add_child(debug)
-			
 	mat.albedo_texture = textures.front()
 	
-	root.set_meta("colors", textures)
+	var palette_node = Node.new()
+	palette_node.name = "palettes"
+	palette_node.set_meta("colors", textures)
+	root.add_child(palette_node)
+	palette_node.owner = root
+	
 	
 	return root
 
