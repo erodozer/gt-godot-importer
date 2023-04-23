@@ -1,13 +1,17 @@
 extends RefCounted
 
-const WheelMesh = preload("./wheel.mesh")
-
 const BitmapHeight = preload("./gdp.gd").BitmapHeight
 const BitmapWidth = preload("./gdp.gd").BitmapWidth
 
 const UNITS_TO_METRES = 1.0 / 4096.0
 
 var shadow_material: Material
+var tire_material: Material
+
+const TireSizes = preload("./tire_size.gd").SIZES
+
+var rim_mesh: Mesh
+
 func _init():
 	var mat = StandardMaterial3D.new()
 	mat.albedo_color = Color.BLACK
@@ -15,6 +19,37 @@ func _init():
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	
 	shadow_material = mat
+	
+	mat = StandardMaterial3D.new()
+	mat.albedo_color = Color.BLACK
+	mat.cull_mode = BaseMaterial3D.CULL_BACK
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	
+	tire_material = mat
+	
+	# build the rim face with appropriate UVs to map to the car textures
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	
+	st.set_uv(Vector2(0.0, 0.0))
+	st.add_vertex(Vector3(-0.5, -0.5, 0.0))
+	
+	st.set_uv(Vector2(48.0 / 256.0, 0.0))
+	st.add_vertex(Vector3(0.5, -0.5, 0.0))
+	
+	st.set_uv(Vector2(48.0 / 256.0, 48.0 / 256.0))
+	st.add_vertex(Vector3(0.5, 0.5, 0.0))
+	
+	st.set_uv(Vector2(48.0 / 256.0, 48.0 / 256.0))
+	st.add_vertex(Vector3(0.5, 0.5, 0.0))
+	
+	st.set_uv(Vector2(0.0, 48.0 / 256.0))
+	st.add_vertex(Vector3(-0.5, 0.5, 0.0))
+	
+	st.set_uv(Vector2(0.0, 0.0))
+	st.add_vertex(Vector3(-0.5, -0.5, 0.0))
+	
+	rim_mesh = st.commit()
 
 ## create a signed short
 func short(i: int):
@@ -27,19 +62,51 @@ func make_wheel(buffer: FileAccess, material: Material):
 	var x = short(buffer.get_16())
 	var y = short(buffer.get_16())
 	var z = short(buffer.get_16())
-	var w = short(buffer.get_16())
+	var w = short(buffer.get_16()) # id of the tire type
 	
-	var wheel = MeshInstance3D.new()
-	wheel.mesh = WheelMesh.duplicate()
-	wheel.set_surface_override_material(0, null)
-	wheel.set_surface_override_material(1, material)
+	# sanitizes the ids due to a few additional metadata features of the value
+	#   -/+ sign indicates flip direction of the tire shape
+	#   offset of +1 or +2 indicates left or right side of the vehicle
+	# by removing the sign and snapping to the nearest 10 value, we can get
+	# the appropriate ID of the tire sizes from GT2's data mapping
+	var tire_size = TireSizes["%d" % snapped(abs(w), 10)]
 	
-	var scale = (w / 10000.0)
+	var rim_diameter = tire_size.DiameterInches.to_int() * 0.0254 # inches to meters
+	var width = tire_size.WidthMM.to_int() / 1000.0
+	var tire_thickness = width * (tire_size.Profile.to_int() / 100.0)
+	var tire_diameter = rim_diameter + (tire_thickness * 2.0)
+	var scale = signf(w)
 	
-	wheel.position = Vector3(x,y,z) * UNITS_TO_METRES
-	wheel.translate(Vector3(0.0, abs(scale) * 0.5, 0.0))
-	wheel.scale = Vector3(1.0,1.0,1.0) * scale
+	var tire_mesh = CylinderMesh.new()
+	tire_mesh.radial_segments = 16
+	tire_mesh.top_radius = tire_diameter / 2.0
+	tire_mesh.bottom_radius = tire_diameter / 2.0
+	tire_mesh.height = width
+	tire_mesh.material = tire_material
+	var tire = MeshInstance3D.new()
+	tire.mesh = tire_mesh
+	tire.name = "tire"
+	tire.position = Vector3(0, width / 2.0, 0)
+	
+	var rim = MeshInstance3D.new()
+	rim.mesh = rim_mesh
+	rim.material_override = material
+	rim.rotate_x(deg_to_rad(-90))
+	rim.scale = Vector3(rim_diameter, rim_diameter, 1.0)
+	rim.position = Vector3(0.0, -0.01, 0.0)
+	rim.name = "rim"
+	
+	var wheel = Node3D.new()
+	wheel.add_child(tire)
+	wheel.add_child(rim)
+	
+	wheel.position = Vector3(x,y,z) * UNITS_TO_METRES + Vector3(0, tire_thickness, 0)
+	wheel.scale = Vector3(1.0, scale, 1.0)
+	wheel.rotate_z(deg_to_rad(90))
 	wheel.add_to_group("gt2:wheel", true)
+	wheel.set_meta("tire_diameter", rim_diameter / 2.0)
+	wheel.set_meta("tire_id", w)
+
 	return wheel
 	
 func make_face(buffer: FileAccess, is_quad: bool, vertices: Array, normals: Array):
@@ -340,7 +407,7 @@ func make_shadow(buffer: FileAccess):
 	
 	return m
 
-func parse_model(source_file: String, palettes: Dictionary, include_wheels = true):
+func parse_model(source_file: String, palettes: Dictionary, include_wheels = true, include_shadow = false):
 	var file = FileAccess.open(source_file, FileAccess.READ)
 	if file == null:
 		return FileAccess.get_open_error()
@@ -369,12 +436,16 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	var scale = 0.0
 	for i in range(4):
 		var wheel = make_wheel(file, mat)
-		scale = wheel.scale.y
 		if include_wheels:
 			wheel.name = "wheel_%02d" % i
 			root.add_child(wheel)
 			wheels.append(wheel)
 			wheel.owner = root
+			for c in wheel.get_children():
+				c.owner = root
+	
+	if include_wheels:
+		scale = wheels[0].get_meta("tire_diameter")
 		
 	file.get_buffer(0x828) # skip ahead
 	var lodCount = file.get_16()
@@ -385,7 +456,7 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	for i in range(lodCount):
 		var lod = make_lod(file, palettes)
 		lod.name = "lod_%d" % i
-		lod.translate(Vector3(0, scale * 0.75, 0))
+		lod.position = Vector3(0, scale, 0)
 		
 		for s in range(lod.mesh.get_surface_count()):
 			var palette = (lod.mesh as ArrayMesh).surface_get_name(s).split("/")[1].split("=")[1].to_int()
@@ -404,10 +475,11 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 			lods.append(lod)
 			lod.add_to_group("gt2:body", true)
 		
-	var shadow = make_shadow(file)
-	shadow.name = "shadow"
-	root.add_child(shadow)
-	shadow.owner = root
+	if include_shadow:
+		var shadow = make_shadow(file)
+		shadow.name = "shadow"
+		root.add_child(shadow)
+		shadow.owner = root
 	
 	for lod in lods:
 		root.add_child(lod)
@@ -437,11 +509,9 @@ static func apply_palette(car: Node, palettes: Array, idx: int):
 	var tex = palettes[idx]
 	for mesh in car.get_children():
 		if mesh.is_in_group("gt2:wheel"):
-			var wheel = mesh as MeshInstance3D
+			var wheel = mesh.get_node("rim") as MeshInstance3D
 			# only override the wheel
-			var mat = wheel.get_surface_override_material(
-				1
-			) as BaseMaterial3D
+			var mat = wheel.material_override
 			mat.albedo_texture = tex
 		elif mesh.is_in_group("gt2:body"):
 			var body = mesh as MeshInstance3D

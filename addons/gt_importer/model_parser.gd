@@ -40,6 +40,9 @@ func _get_import_options(path, preset):
 			}, {
 				"name": "include_wheels",
 				"default_value": true
+			}, {
+				"name": "include_shadow",
+				"default_value": false
 			}]
 		_:
 			return []
@@ -61,7 +64,7 @@ func _import(source_file, save_path, options, r_platform_variants, r_gen_files):
 		source_file.get_basename() + palette_ext
 	)
 	var model = shape_parser.parse_model(
-		source_file, colors, options.include_wheels
+		source_file, colors, options.include_wheels, options.include_shadow
 	)
 	model.name = source_file.get_file().replace(".", "_")
 	
