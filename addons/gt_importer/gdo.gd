@@ -8,9 +8,8 @@ const UNITS_TO_METRES = 1.0 / 4096.0
 var shadow_material: Material
 var tire_material: Material
 
-const TireSizes = preload("./tire_size.gd").SIZES
-
 var rim_mesh: Mesh
+var car_data: Array
 
 func _init():
 	var mat = StandardMaterial3D.new()
@@ -50,6 +49,8 @@ func _init():
 	st.add_vertex(Vector3(-0.5, -0.5, 0.0))
 	
 	rim_mesh = st.commit()
+	
+	car_data = JSON.parse_string(FileAccess.get_file_as_string("res://addons/gt_importer/car.json"))
 
 ## create a signed short
 func short(i: int):
@@ -58,19 +59,17 @@ func short(i: int):
 func int32(i: int):
 	return wrapi(i, -pow(2, 16), pow(2, 16))
 
-func make_wheel(buffer: FileAccess, material: Material):
+func make_wheel(buffer: FileAccess, material: Material, tire_size: Dictionary):
 	var x = short(buffer.get_16())
 	var y = short(buffer.get_16())
 	var z = short(buffer.get_16())
-	var w = short(buffer.get_16()) # id of the tire type
+	var w = short(buffer.get_16()) # unknown data
 	
 	# sanitizes the ids due to a few additional metadata features of the value
 	#   -/+ sign indicates flip direction of the tire shape
 	#   offset of +1 or +2 indicates left or right side of the vehicle
 	# by removing the sign and snapping to the nearest 10 value, we can get
 	# the appropriate ID of the tire sizes from GT2's data mapping
-	var tire_size = TireSizes["%d" % snapped(abs(w), 10)]
-	
 	var rim_diameter = tire_size.DiameterInches.to_int() * 0.0254 # inches to meters
 	var width = tire_size.WidthMM.to_int() / 1000.0
 	var tire_thickness = width * (tire_size.Profile.to_int() / 100.0)
@@ -78,7 +77,7 @@ func make_wheel(buffer: FileAccess, material: Material):
 	var scale = signf(w)
 	
 	var tire_mesh = CylinderMesh.new()
-	tire_mesh.radial_segments = 16
+	tire_mesh.radial_segments = 24
 	tire_mesh.top_radius = tire_diameter / 2.0
 	tire_mesh.bottom_radius = tire_diameter / 2.0
 	tire_mesh.height = width
@@ -104,8 +103,7 @@ func make_wheel(buffer: FileAccess, material: Material):
 	wheel.scale = Vector3(1.0, scale, 1.0)
 	wheel.rotate_z(deg_to_rad(90))
 	wheel.add_to_group("gt2:wheel", true)
-	wheel.set_meta("tire_diameter", rim_diameter / 2.0)
-	wheel.set_meta("tire_id", w)
+	wheel.set_meta("tire", tire_size)
 
 	return wheel
 	
@@ -413,6 +411,9 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 		return FileAccess.get_open_error()
 	
 	var root = Node3D.new()
+
+	var car_id = source_file.get_file().rsplit(".", false, 1)[0]
+	var data:Dictionary = car_data.filter(func (x): return x.CarId == car_id)[0]
 	
 	# read header
 	file.seek(0x08)
@@ -435,7 +436,7 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	var wheels = []
 	var scale = 0.0
 	for i in range(4):
-		var wheel = make_wheel(file, mat)
+		var wheel = make_wheel(file, mat, data["TiresFront" if i < 2 else "TiresRear"].WheelSize)
 		if include_wheels:
 			wheel.name = "wheel_%02d" % i
 			root.add_child(wheel)
@@ -445,7 +446,7 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 				c.owner = root
 	
 	if include_wheels:
-		scale = wheels[0].get_meta("tire_diameter")
+		scale = data.Suspension.DefaultHeightFront.to_int() / 1000.0 # height in mm
 		
 	file.get_buffer(0x828) # skip ahead
 	var lodCount = file.get_16()
@@ -455,7 +456,6 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	var lods = []
 	for i in range(lodCount):
 		var lod = make_lod(file, palettes)
-		lod.name = "lod_%d" % i
 		lod.position = Vector3(0, scale, 0)
 		
 		for s in range(lod.mesh.get_surface_count()):
@@ -472,6 +472,7 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 				)
 	
 		if lods.is_empty():
+			lod.name = "body"
 			lods.append(lod)
 			lod.add_to_group("gt2:body", true)
 		

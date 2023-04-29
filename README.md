@@ -13,8 +13,9 @@ https://user-images.githubusercontent.com/316728/232184206-af8f2d09-9397-4fb0-98
 
 ## How do I use this
 
-After enabling the plugin, Godot will be able to import CDO and CNO assets into your project.  In addition to the model, you need also supply the associated CDP/CNP file, which contains the palette data.
+After enabling the plugin, Godot will be able to import CDO and CNO assets into your project.  In addition to the model, you need also supply the associated CDP/CNP file, which contains the palette data, as well as a json file consisting of all the data pertaining to each car's configuration.
 In order to have these files, you must first extract them using [GTVolTools](https://github.com/adeyblue/GTVolTools) from a legitmate copy of Gran Turismo 2.  Any region of the game should work.
+You will also have to use GT2 Data Extractor from GT2Tools to create CSVs of all the data, and then merge them into a json for the plugin to load.
 
 The code is decoupled from the plugin definition.  This is useful for any tooling focused applications where you may wish to supply the files at runtime.
 
