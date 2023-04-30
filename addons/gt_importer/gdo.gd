@@ -9,12 +9,12 @@ var shadow_material: Material
 var tire_material: Material
 
 var rim_mesh: Mesh
-var car_data: Array
+var car_data: Array = []
 
 func _init():
 	var mat = StandardMaterial3D.new()
 	mat.albedo_color = Color.BLACK
-	mat.cull_mode = BaseMaterial3D.CULL_BACK
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	
 	shadow_material = mat
@@ -50,7 +50,8 @@ func _init():
 	
 	rim_mesh = st.commit()
 	
-	car_data = JSON.parse_string(FileAccess.get_file_as_string("res://addons/gt_importer/car.json"))
+	if FileAccess.file_exists("res://addons/gt_importer/car.json"):
+		car_data = JSON.parse_string(FileAccess.get_file_as_string("res://addons/gt_importer/car.json"))
 
 ## create a signed short
 func short(i: int):
@@ -127,19 +128,19 @@ func make_face(buffer: FileAccess, is_quad: bool, vertices: Array, normals: Arra
 	
 	var out_v = [v2, v1, v0] # ABC
 	var out_n = [n2, n1, n0]
-	var raw_v = [v0, v1, v2]
-	var raw_n = [n0, n1, n2]
+	var raw_v = [v0, v2, v1]
+	var raw_n = [n0, n2, n1]
 	if is_quad:
 		out_v.append_array([v3, v2, v0]) #ACD
 		out_n.append_array([n3, n2, n0])
-		raw_v.append(v3)
-		raw_n.append(n3)
+		raw_v.insert(1, v3)
+		raw_n.insert(1, n3)
 		
 	return {
 		"vertices": out_v.map(func (x): return vertices[x]),
 		"normals": out_n.map(func (x): return normals[x]),
-		"raw_vertices": raw_v,
-		"raw_normals": raw_n,
+		"raw_vertices": raw_v.map(func (x): return vertices[x]),
+		"raw_normals": raw_n.map(func (x): return normals[x]),
 		"flags": flags,
 		"face_type": face_type
 	}
@@ -158,10 +159,10 @@ func make_uv(buffer, is_quad, vertices, normals):
 	var uv3 = Vector2(buffer.get_8() / 255.0, buffer.get_8() / 255.0)
 	
 	var uvs = [uv2, uv1, uv0]
-	var raw_uvs = [uv0, uv1, uv2]
+	var raw_uvs = [uv0, uv2, uv1]
 	if is_quad:
 		uvs.append_array([uv3, uv2, uv0])
-		raw_uvs.append(uv3)
+		raw_uvs.insert(1, uv3)
 	
 	return {
 		"vertices": polygon.vertices,
@@ -169,6 +170,8 @@ func make_uv(buffer, is_quad, vertices, normals):
 		"flags": polygon.flags,
 		"face_type": polygon.face_type,
 		"uvs": uvs,
+		"raw_vertices": polygon.raw_vertices,
+		"raw_normals": polygon.raw_normals,
 		"raw_uvs": raw_uvs,
 		"palette": palette_index
 	}
@@ -255,7 +258,7 @@ func make_lod(buffer: FileAccess, colors: Dictionary):
 	var normals = []
 	var n_max = [0,0,0]
 	var n_min = [0,0,0]
-	var sign_bit = 1 << 9
+	var sign_bit = (1 << 9)
 	for _i in range(normal_count):
 		var i = buffer.get_32()
 		normals.append(Vector3(
@@ -284,23 +287,30 @@ func make_lod(buffer: FileAccess, colors: Dictionary):
 		faces.append(make_uv(buffer, true, vertices, normals))
 		
 	# chunk faces based on their material
-	var groups = {}
+	var groups: Dictionary = {}
 	for f in faces:
 		var p = -1 if not ("palette" in f) else f.palette
 		var l = groups.get(p, [])
 		l.append(f)
 		groups[p] = l
+		
+	# faces must be draw in order of their palettes
+	var palettes = groups.keys()
+	palettes.sort()
 	
-	for p in groups:
+	for p in palettes:
 		var mat = null if p == -1 else colors.values()[0].materials[p]
+		
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	
+		
 		for f in groups[p]:
-			for i in range(len(f.vertices)):
-				st.set_normal(f.normals[i])
-				st.set_uv(Vector2.ZERO if p == -1 else f.uvs[i])
-				st.add_vertex(f.vertices[i])
-				
+			st.add_triangle_fan(
+				f.raw_vertices,
+				[] if p == -1 else f.raw_uvs,
+				[],[],
+				f.raw_normals
+			)
+		
 			if p != -1:
 				# copy pixels to merged texture
 				var copy = uvs_to_pixels(f.uvs)
@@ -366,34 +376,24 @@ func make_shadow(buffer: FileAccess):
 	
 	for _i in range(tri_count):
 		var data = buffer.get_32()
-		st.add_vertex(vertices[data >> 12 & 0x3F])
-		st.add_vertex(vertices[data >> 6 & 0x3F])
-		st.add_vertex(vertices[data & 0x3F])
-	
-		# add in reverse
-		st.add_vertex(vertices[data & 0x3F])
-		st.add_vertex(vertices[data >> 6 & 0x3F])
-		st.add_vertex(vertices[data >> 12 & 0x3F])
-		
+		st.add_triangle_fan(
+			[
+				vertices[data >> 12 & 0x3F],
+				vertices[data >> 6 & 0x3F],
+				vertices[data & 0x3F],
+			]
+		)
 		
 	for _i in range(quad_count):
 		var data = buffer.get_32()
-		st.add_vertex(vertices[data >> 12 & 0x3F])
-		st.add_vertex(vertices[data >> 6 & 0x3F])
-		st.add_vertex(vertices[data & 0x3F])
-		
-		st.add_vertex(vertices[data >> 18 & 0x3F])
-		st.add_vertex(vertices[data >> 12 & 0x3F])
-		st.add_vertex(vertices[data & 0x3F])
-		
-		# add in reverse
-		st.add_vertex(vertices[data & 0x3F])
-		st.add_vertex(vertices[data >> 6 & 0x3F])
-		st.add_vertex(vertices[data >> 12 & 0x3F])
-		
-		st.add_vertex(vertices[data & 0x3F])
-		st.add_vertex(vertices[data >> 12 & 0x3F])
-		st.add_vertex(vertices[data >> 18 & 0x3F])
+		st.add_triangle_fan(
+			[
+				vertices[data >> 18 & 0x3F],
+				vertices[data >> 12 & 0x3F],
+				vertices[data >> 6 & 0x3F],
+				vertices[data & 0x3F]
+			]
+		)
 		
 	var mesh = st.commit()
 	
@@ -413,7 +413,7 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	var root = Node3D.new()
 
 	var car_id = source_file.get_file().rsplit(".", false, 1)[0]
-	var data:Dictionary = car_data.filter(func (x): return x.CarId == car_id)[0]
+	var data:Dictionary = car_data.filter(func (x): return x.CarId == car_id).front()
 	
 	# read header
 	file.seek(0x08)
@@ -427,17 +427,16 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	
 	var mat = StandardMaterial3D.new()
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	mat.cull_mode = BaseMaterial3D.CULL_BACK
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 	mat.resource_local_to_scene = true
 	
 	# read wheel positions
-	var wheels = []
 	var scale = 0.0
-	for i in range(4):
-		var wheel = make_wheel(file, mat, data["TiresFront" if i < 2 else "TiresRear"].WheelSize)
-		if include_wheels:
+	if include_wheels and data != null:
+		var wheels = []
+		for i in range(4):
+			var wheel = make_wheel(file, mat, data["TiresFront" if i < 2 else "TiresRear"].WheelSize)
 			wheel.name = "wheel_%02d" % i
 			root.add_child(wheel)
 			wheels.append(wheel)
@@ -445,7 +444,6 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 			for c in wheel.get_children():
 				c.owner = root
 	
-	if include_wheels:
 		scale = data.Suspension.DefaultHeightFront.to_int() / 1000.0 # height in mm
 		
 	file.get_buffer(0x828) # skip ahead
