@@ -142,7 +142,8 @@ func make_face(buffer: FileAccess, is_quad: bool, vertices: Array, normals: Arra
 		"raw_vertices": raw_v.map(func (x): return vertices[x]),
 		"raw_normals": raw_n.map(func (x): return normals[x]),
 		"flags": flags,
-		"face_type": face_type
+		"face_type": face_type,
+		"render_order": render_order
 	}
 	
 func make_uv(buffer, is_quad, vertices, normals):
@@ -173,7 +174,8 @@ func make_uv(buffer, is_quad, vertices, normals):
 		"raw_vertices": polygon.raw_vertices,
 		"raw_normals": polygon.raw_normals,
 		"raw_uvs": raw_uvs,
-		"palette": palette_index
+		"palette": palette_index,
+		"render_order": polygon.render_order
 	}
 	
 func uvs_to_pixels(uvs):
@@ -267,69 +269,70 @@ func make_lod(buffer: FileAccess, colors: Dictionary):
 			(((i >> 22) & 0x3FF) ^ sign_bit) - sign_bit
 		) / 500.0)
 	
-	# group faces into palettes
-	# so we can minimize the number of surfaces and texture binds
-	var faces = []
-	
-	var st = SurfaceTool.new()
-	# TODO split into multiple surfaces if there is duplicate faces
-	# should fix UV mapping
-	
 	var mesh = ArrayMesh.new()
+	var st = SurfaceTool.new()
 	
-	for _i in range(tri_count):
-		faces.append(make_face(buffer, false, vertices, normals))
-	for _i in range(quad_count):
-		faces.append(make_face(buffer, true, vertices, normals))
-	for _i in range(uv_tri_count):
-		faces.append(make_uv(buffer, false, vertices, normals))
-	for _i in range(uv_quad_count):
-		faces.append(make_uv(buffer, true, vertices, normals))
+	var draw_polygons = func (count, quad, uv):
+		if count == 0:
+			return
+			
+		var idx = 0
+		var faces = []
+		for _i in range(count):
+			var f
+			if not uv:
+				f = make_face(buffer, quad, vertices, normals)
+			else:
+				f = make_uv(buffer, quad, vertices, normals)
+			f["idx"] = idx
+			faces.append(f)
+			idx += 1
 		
-	# chunk faces based on their material
-	var groups: Dictionary = {}
-	for f in faces:
-		var p = -1 if not ("palette" in f) else f.palette
-		var l = groups.get(p, [])
-		l.append(f)
-		groups[p] = l
-		
-	# faces must be draw in order of their palettes
-	var palettes = groups.keys()
-	palettes.sort()
-	
-	for p in palettes:
-		var mat = null if p == -1 else colors.values()[0].materials[p]
-		
-		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-		
-		for f in groups[p]:
+		faces.sort_custom(
+			func (a, b):
+				if a.render_order < b.render_order:
+					return true
+				# force consistency
+				return a.idx < b.idx
+		)
+		# render order is desc
+		faces.reverse()
+
+		for f in faces:
 			st.add_triangle_fan(
 				f.raw_vertices,
-				[] if p == -1 else f.raw_uvs,
+				f.raw_uvs if uv else [],
 				[],[],
 				f.raw_normals
 			)
-		
-			if p != -1:
-				# copy pixels to merged texture
+			
+			# copy pixels to merged texture
+			if uv:
 				var copy = uvs_to_pixels(f.uvs)
 				for _c in colors.values():
 					_c.merged.blend_rect(
-						_c.palettes[p], copy, copy.position
+						_c.palettes[f.palette], copy, copy.position
 					)
-		
-		mesh = st.commit(mesh)
-		mesh.surface_set_name(
-			mesh.get_surface_count() - 1,
-			"face=%d/palette=%d" % [
-				mesh.get_surface_count() - 1,
-				p
-			]
-		)
-		
-	#var mesh = st.commit()
-	#mesh.surface_set_name(0, "body")
+			
+	# build non-textured surface
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	draw_polygons.call(tri_count, false, false)
+	draw_polygons.call(quad_count, true, false)
+	mesh = st.commit(mesh)
+	mesh.surface_set_name(
+		0,
+		"shadow"
+	)
+	
+	# build textured surface
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	draw_polygons.call(uv_tri_count, false, true)
+	draw_polygons.call(uv_quad_count, true, true)
+	mesh = st.commit(mesh)
+	mesh.surface_set_name(
+		1,
+		"chassis"
+	)
 	
 	var instance = MeshInstance3D.new()
 	instance.mesh = mesh
@@ -456,19 +459,9 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 		var lod = make_lod(file, palettes)
 		lod.position = Vector3(0, scale, 0)
 		
-		for s in range(lod.mesh.get_surface_count()):
-			var palette = (lod.mesh as ArrayMesh).surface_get_name(s).split("/")[1].split("=")[1].to_int()
-			if palette == -1:
-				lod.set_surface_override_material(
-					s,
-					shadow_material,
-				)
-			else:
-				lod.set_surface_override_material(
-					s,
-					mat,
-				)
-	
+		lod.set_surface_override_material(0, shadow_material)
+		lod.set_surface_override_material(1, mat)
+		
 		if lods.is_empty():
 			lod.name = "body"
 			lods.append(lod)
