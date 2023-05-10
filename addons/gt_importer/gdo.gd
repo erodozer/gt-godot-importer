@@ -27,28 +27,9 @@ func _init():
 	tire_material = mat
 	
 	# build the rim face with appropriate UVs to map to the car textures
-	var st = SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	
-	st.set_uv(Vector2(0.0, 0.0))
-	st.add_vertex(Vector3(-0.5, -0.5, 0.0))
-	
-	st.set_uv(Vector2(48.0 / 256.0, 0.0))
-	st.add_vertex(Vector3(0.5, -0.5, 0.0))
-	
-	st.set_uv(Vector2(48.0 / 256.0, 48.0 / 256.0))
-	st.add_vertex(Vector3(0.5, 0.5, 0.0))
-	
-	st.set_uv(Vector2(48.0 / 256.0, 48.0 / 256.0))
-	st.add_vertex(Vector3(0.5, 0.5, 0.0))
-	
-	st.set_uv(Vector2(0.0, 48.0 / 256.0))
-	st.add_vertex(Vector3(-0.5, 0.5, 0.0))
-	
-	st.set_uv(Vector2(0.0, 0.0))
-	st.add_vertex(Vector3(-0.5, -0.5, 0.0))
-	
-	rim_mesh = st.commit()
+	rim_mesh = QuadMesh.new()
+	rim_mesh.size = Vector2(1.0, 1.0)
+	rim_mesh.flip_faces = true
 	
 	if FileAccess.file_exists("res://addons/gt_importer/car.json"):
 		car_data = JSON.parse_string(FileAccess.get_file_as_string("res://addons/gt_importer/car.json"))
@@ -428,15 +409,27 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	var unknown_3 = file.get_16()
 	var unknown_4 = file.get_16()
 	
-	var mat = StandardMaterial3D.new()
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
-	mat.resource_local_to_scene = true
-	
 	# read wheel positions
 	var scale = 0.0
 	if include_wheels and data != null:
+		var mat = StandardMaterial3D.new()
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
+		mat.resource_local_to_scene = true
+		mat.uv1_scale = Vector3(48.0/49.0, 48.0/49.0, 1.0)
+		
+		# copy tire from first texture
+		var img = Image.create(48, 48, false, Image.FORMAT_RGBA8)
+		img.fill(Color.TRANSPARENT)
+		img.blit_rect(
+			palettes.values()[0].merged,
+			Rect2i(0, 0, 48, 48),
+			Vector2i(0, 0)
+		)
+		var tex = ImageTexture.create_from_image(img)
+		mat.albedo_texture = tex
+		
 		var wheels = []
 		for i in range(4):
 			var wheel = make_wheel(file, mat, data["TiresFront" if i < 2 else "TiresRear"].WheelSize)
@@ -449,6 +442,12 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	
 		scale = data.Suspension.DefaultHeightFront.to_int() / 1000.0 # height in mm
 		
+	var mat = StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
+	mat.resource_local_to_scene = true
+	
 	file.get_buffer(0x828) # skip ahead
 	var lodCount = file.get_16()
 	
