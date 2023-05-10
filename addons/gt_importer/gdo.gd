@@ -71,7 +71,6 @@ func make_wheel(buffer: FileAccess, material: Material, tire_size: Dictionary):
 	
 	var rim = MeshInstance3D.new()
 	rim.mesh = rim_mesh
-	rim.material_override = material
 	rim.rotate_x(deg_to_rad(-90))
 	rim.scale = Vector3(rim_diameter, rim_diameter, 1.0)
 	rim.position = Vector3(0.0, -0.01, 0.0)
@@ -430,6 +429,8 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 		var tex = ImageTexture.create_from_image(img)
 		mat.albedo_texture = tex
 		
+		rim_mesh.surface_set_material(0, mat)
+		
 		var wheels = []
 		for i in range(4):
 			var wheel = make_wheel(file, mat, data["TiresFront" if i < 2 else "TiresRear"].WheelSize)
@@ -458,8 +459,8 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 		var lod = make_lod(file, palettes)
 		lod.position = Vector3(0, scale, 0)
 		
-		lod.set_surface_override_material(0, shadow_material)
-		lod.set_surface_override_material(1, mat)
+		lod.mesh.surface_set_material(0, shadow_material)
+		lod.mesh.surface_set_material(1, mat)
 		
 		if lods.is_empty():
 			lod.name = "body"
