@@ -497,19 +497,30 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	return root
 
 ## Swap the color texture for a car model
-static func apply_palette(car: Node, palettes: Array, idx: int):
-	var tex = palettes[idx]
+static func apply_palette(car: Node, idx: int):
+	var mat = StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
+	mat.resource_local_to_scene = true
+	mat.albedo_texture = car.get_node("palettes").get_meta("colors")[idx]
 	for mesh in car.get_children():
-		if mesh.is_in_group("gt2:wheel"):
-			var wheel = mesh.get_node("rim") as MeshInstance3D
-			# only override the wheel
-			var mat = wheel.material_override
-			mat.albedo_texture = tex
-		elif mesh.is_in_group("gt2:body"):
+		if mesh.is_in_group("gt2:body"):
 			var body = mesh as MeshInstance3D
 			# all textured surfaces share the same resource
 			# so we can just swap it on one and affect all
-			var mat = mesh.get_surface_override_material(
-				1
-			) as BaseMaterial3D
-			mat.albedo_texture = tex
+			mesh.set_surface_override_material(1, mat)
+
+static func apply_wheel(car: Node, wheel: Texture):
+	var mat = StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
+	mat.resource_local_to_scene = true
+	mat.uv1_scale = Vector3(48.0/49.0, 48.0/49.0, 1.0)
+	mat.albedo_texture = wheel
+	
+	for mesh in car.get_children():
+		if mesh.is_in_group("gt2:wheel"):
+			var rim = mesh.get_node("rim") as MeshInstance3D
+			rim.set_surface_override_material(0, mat)
