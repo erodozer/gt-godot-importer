@@ -40,6 +40,53 @@ func short(i: int):
 	
 func int32(i: int):
 	return wrapi(i, -pow(2, 16), pow(2, 16))
+	
+static func make_wheel_mesh(tire_size: Dictionary, mat: Material = null, tire_mat: Material = null):
+	if mat == null:
+		mat = StandardMaterial3D.new()
+		mat.albedo_color = Color.BLACK
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	if tire_mat == null:
+		tire_mat = StandardMaterial3D.new()
+		tire_mat.albedo_color = Color.BLACK
+		tire_mat.cull_mode = BaseMaterial3D.CULL_BACK
+		tire_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	
+	var rim_diameter = tire_size.DiameterInches.to_int() * 0.0254 # inches to meters
+	var width = tire_size.WidthMM.to_int() / 1000.0
+	var tire_thickness = width * (tire_size.Profile.to_int() / 100.0)
+	var tire_diameter = rim_diameter + (tire_thickness * 2.0)
+	
+	var tire_mesh = CylinderMesh.new()
+	tire_mesh.radial_segments = 24
+	tire_mesh.top_radius = tire_diameter / 2.0
+	tire_mesh.bottom_radius = tire_diameter / 2.0
+	tire_mesh.height = width
+	tire_mesh.material = tire_mat
+	var tire = MeshInstance3D.new()
+	tire.mesh = tire_mesh
+	tire.name = "tire"
+	tire.position = Vector3(0, width / 2.0, 0)
+	
+	var rim_mesh = QuadMesh.new()
+	rim_mesh.size = Vector2(1.0, 1.0)
+	rim_mesh.flip_faces = true
+	rim_mesh.material = mat
+	
+	var rim = MeshInstance3D.new()
+	rim.mesh = rim_mesh
+	rim.rotate_x(deg_to_rad(-90))
+	rim.scale = Vector3(rim_diameter, rim_diameter, 1.0)
+	rim.position = Vector3(0.0, -0.01, 0.0)
+	rim.name = "rim"
+	
+	var wheel = Node3D.new()
+	wheel.add_child(tire)
+	wheel.add_child(rim)
+	wheel.rotate_z(deg_to_rad(90))
+	
+	return wheel
 
 func make_wheel(buffer: FileAccess, material: Material, tire_size: Dictionary):
 	var x = short(buffer.get_16())
@@ -52,37 +99,14 @@ func make_wheel(buffer: FileAccess, material: Material, tire_size: Dictionary):
 	#   offset of +1 or +2 indicates left or right side of the vehicle
 	# by removing the sign and snapping to the nearest 10 value, we can get
 	# the appropriate ID of the tire sizes from GT2's data mapping
-	var rim_diameter = tire_size.DiameterInches.to_int() * 0.0254 # inches to meters
+	var scale = signf(w)
 	var width = tire_size.WidthMM.to_int() / 1000.0
 	var tire_thickness = width * (tire_size.Profile.to_int() / 100.0)
-	var tire_diameter = rim_diameter + (tire_thickness * 2.0)
-	var scale = signf(w)
-	
-	var tire_mesh = CylinderMesh.new()
-	tire_mesh.radial_segments = 24
-	tire_mesh.top_radius = tire_diameter / 2.0
-	tire_mesh.bottom_radius = tire_diameter / 2.0
-	tire_mesh.height = width
-	tire_mesh.material = tire_material
-	var tire = MeshInstance3D.new()
-	tire.mesh = tire_mesh
-	tire.name = "tire"
-	tire.position = Vector3(0, width / 2.0, 0)
-	
-	var rim = MeshInstance3D.new()
-	rim.mesh = rim_mesh
-	rim.rotate_x(deg_to_rad(-90))
-	rim.scale = Vector3(rim_diameter, rim_diameter, 1.0)
-	rim.position = Vector3(0.0, -0.01, 0.0)
-	rim.name = "rim"
-	
-	var wheel = Node3D.new()
-	wheel.add_child(tire)
-	wheel.add_child(rim)
+
+	var wheel = make_wheel_mesh(tire_size, material, tire_material)
 	
 	wheel.position = Vector3(x,y,z) * UNITS_TO_METRES + Vector3(0, tire_thickness, 0)
 	wheel.scale = Vector3(1.0, scale, 1.0)
-	wheel.rotate_z(deg_to_rad(90))
 	wheel.add_to_group("gt2:wheel", true)
 	wheel.set_meta("tire", tire_size)
 
