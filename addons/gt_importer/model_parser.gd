@@ -1,5 +1,5 @@
 @tool
-extends EditorImportPlugin
+extends EditorSceneFormatImporter
 
 enum Presets { DEFAULT }
 
@@ -9,43 +9,23 @@ func _get_importer_name():
 func _get_visible_name():
 	return "GT2 Car"
 
-func _get_recognized_extensions():
+func _get_extensions():
 	return ["cdo", "cno"]
-
-func _get_save_extension():
-	return "scn"
-
-func _get_resource_type():
-	return "PackedScene"
 
 func _get_priority():
 	return 1
 
-func _get_preset_count():
-	return Presets.size()
-	
-func _get_preset_name(preset):
-	match preset:
-		Presets.DEFAULT:
-			return "Default"
-		_:
-			return "Unknown"
-	
-func _get_import_options(path, preset):
-	match preset:
-		Presets.DEFAULT:
-			return [{
-				"name": "include_materials",
-				"default_value": true
-			}, {
-				"name": "include_wheels",
-				"default_value": true
-			}, {
-				"name": "include_shadow",
-				"default_value": false
-			}]
-		_:
-			return []
+func _get_import_options(path):
+	return [{
+		"name": "include_materials",
+		"default_value": true
+	}, {
+		"name": "include_wheels",
+		"default_value": true
+	}, {
+		"name": "include_shadow",
+		"default_value": false
+	}]
 
 func _get_import_order():
 	return 0
@@ -53,7 +33,7 @@ func _get_import_order():
 func _get_option_visibility(path, option, options):
 	return true
 	
-func _import(source_file, save_path, options, r_platform_variants, r_gen_files):
+func _import_scene(source_file, flags, options):
 	var color_parser = preload("./gdp.gd").new()
 	var shape_parser = preload("./gdo.gd").new()
 	
@@ -63,19 +43,19 @@ func _import(source_file, save_path, options, r_platform_variants, r_gen_files):
 	var colors = color_parser.parse_palette(
 		source_file.get_basename() + palette_ext
 	)
+
+	if not (colors is Dictionary):
+		push_error("failed to import %s.%s" % [source_file.get_basename(), palette_ext])
+		return FAILED
+
 	var model = shape_parser.parse_model(
 		source_file, colors, options.include_wheels, options.include_shadow
 	)
+	
+	if not model:
+		push_error("failed to import %s" % source_file)
+		return FAILED
+	
 	model.name = source_file.get_file().replace(".", "_")
-	
-	var out = PackedScene.new()
-	out.pack(model)
-	
-	if model:
-		return ResourceSaver.save(
-			out,
-			"%s.%s" % [save_path, _get_save_extension()],
-			ResourceSaver.FLAG_BUNDLE_RESOURCES|ResourceSaver.FLAG_CHANGE_PATH|ResourceSaver.FLAG_REPLACE_SUBRESOURCE_PATHS|ResourceSaver.FLAG_COMPRESS
-		)
-	push_error("failed to import %s" % source_file)
-	
+
+	return model

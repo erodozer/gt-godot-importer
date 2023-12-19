@@ -87,6 +87,14 @@ static func make_wheel_mesh(tire_size: Dictionary, mat: Material = null, tire_ma
 	wheel.rotate_z(deg_to_rad(90))
 	
 	return wheel
+	
+static func sort_faces(a, b):
+	if a.render_order < b.render_order:
+		return true
+	# force consistency
+	if a.idx < b.idx:
+		return true
+	return false
 
 func make_wheel(buffer: FileAccess, material: Material, tire_size: Dictionary):
 	var x = short(buffer.get_16())
@@ -221,7 +229,7 @@ func uvs_to_pixels_brute(uvs: Array):
 		
 	return pixels
 	
-func make_lod(buffer: FileAccess, colors: Dictionary):
+func make_lod(buffer: FileAccess, colors: Dictionary, material: Material):
 	var vertex_count = buffer.get_16()
 	var normal_count = buffer.get_16()
 	var tri_count = buffer.get_16()
@@ -292,13 +300,7 @@ func make_lod(buffer: FileAccess, colors: Dictionary):
 			faces.append(f)
 			idx += 1
 		
-		faces.sort_custom(
-			func (a, b):
-				if a.render_order < b.render_order:
-					return true
-				# force consistency
-				return a.idx < b.idx
-		)
+		faces.sort_custom(sort_faces)
 		# render order is desc
 		faces.reverse()
 
@@ -318,25 +320,30 @@ func make_lod(buffer: FileAccess, colors: Dictionary):
 						_c.palettes[f.palette], copy, copy.position
 					)
 			
-	# build non-textured surface
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	draw_polygons.call(tri_count, false, false)
-	draw_polygons.call(quad_count, true, false)
-	mesh = st.commit(mesh)
-	mesh.surface_set_name(
-		0,
-		"shadow"
-	)
-	
-	# build textured surface
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	draw_polygons.call(uv_tri_count, false, true)
-	draw_polygons.call(uv_quad_count, true, true)
-	mesh = st.commit(mesh)
-	mesh.surface_set_name(
-		1,
-		"chassis"
-	)
+	if tri_count > 0 or quad_count > 0:
+		# build non-textured surface
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		draw_polygons.call(tri_count, false, false)
+		draw_polygons.call(quad_count, true, false)
+		mesh = st.commit(mesh)
+		mesh.surface_set_name(
+			0,
+			"shadow"
+		)
+		mesh.surface_set_material(0, shadow_material)
+		
+		# build textured surface
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		draw_polygons.call(uv_tri_count, false, true)
+		draw_polygons.call(uv_quad_count, true, true)
+		mesh = st.commit(mesh)
+		mesh.surface_set_name(
+			1,
+			"chassis"
+		)
+		mesh.surface_set_material(1, material)
+		
+		
 	
 	var instance = MeshInstance3D.new()
 	instance.mesh = mesh
@@ -420,7 +427,7 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	var root = Node3D.new()
 
 	var car_id = source_file.get_file().rsplit(".", false, 1)[0]
-	var data:Dictionary = car_data.filter(func (x): return x.CarId == car_id).front()
+	var data = car_data.filter(func (x): return x.CarId == car_id).front()
 	
 	# read header
 	file.seek(0x08)
@@ -480,11 +487,8 @@ func parse_model(source_file: String, palettes: Dictionary, include_wheels = tru
 	
 	var lods = []
 	for i in range(lodCount):
-		var lod = make_lod(file, palettes)
+		var lod = make_lod(file, palettes, mat)
 		lod.position = Vector3(0, scale, 0)
-		
-		lod.mesh.surface_set_material(0, shadow_material)
-		lod.mesh.surface_set_material(1, mat)
 		
 		if lods.is_empty():
 			lod.name = "body"
